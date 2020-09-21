@@ -2579,6 +2579,20 @@ cvSmooth( const void* srcarr, void* dstarr, int smooth_type,
         CV_Error( CV_StsUnmatchedFormats, "The destination image does not have the proper type" );
 }
 
+#ifdef _WIN32
+#include "win32/pthread.h"
+#else
+#include "pthread.h"
+#endif
+
+#define MAX_FEATURE_NUM		5	//final score array
+#define MAX_NUM_THREADS		20	//max thread count
+#define NORMAL_WIDTH		480	//normalize width
+#define NORMAL_HEIGHT		270	//normalize height
+
+#define USE_MULTI_THREAD
+
+
 typedef enum featureType {
 	LP_FT_DCT = 0,
 	LP_FT_GAUSSIAN_MSE,
@@ -2588,17 +2602,32 @@ typedef enum featureType {
 	LP_FT_FEATURE_MAX,
 } featureType;
 
-typedef struct FramePair {
-	int			samplecount;
-	IplImage**	master;
-	IplImage**	rendition;	
-} FramePair;
+typedef struct FramePairList {
+	int		width;
+	int		height;
+	int		normalw;
+	int		normalh;
+	int		samplecount;
+	int		featurecount;
+	void	**listmain;
+	void	**listref;
+	double *diffmatrix; //used in Opencv engine
+	double	*finalscore;
+} FramePairList;
 
-CV_IMPL void cvCalcDiff(const void* pairframes)
+typedef struct PairArg {
+	FramePairList*	pairlist;
+	int			index;
+} PairArg;
+
+void* calc_framediff(void* pInfo)
 {	
+	PairArg* pArg = (PairArg*)pInfo;
+	if (pArg == NULL) return NULL;
 
-	FramePair* pPair = (FramePair*)pairframes;	
-	
+	FramePairList* pPair = pArg->pairlist;
+	int index = pArg->index;
+
 	//LP_FT_DCT, LP_FT_GAUSSIAN_MSE, LP_FT_GAUSSIAN_DIFF, LP_FT_GAUSSIAN_TH_DIFF, LP_FT_HISTOGRAM_DISTANCE
 	cv::Mat reference_frame, rendition_frame, next_reference_frame, next_rendition_frame;
 	cv::Mat reference_frame_v, rendition_frame_v, next_reference_frame_v, next_rendition_frame_v;
@@ -2619,14 +2648,13 @@ CV_IMPL void cvCalcDiff(const void* pairframes)
 	const float* ranges[] = { h_ranges, s_ranges, v_ranges };
 	float *phis_a, *phis_b;
 	deps = 1e-10;
-	width = 1920;
-	height = 1080;
-	int index = 0;
-	double* pout = NULL;
+	width = NORMAL_WIDTH;
+	height = NORMAL_HEIGHT;
 
+	double* pout = pPair->diffmatrix + index * MAX_FEATURE_NUM;
 
-	//if (pctxmaster->listfrmame[index] == NULL || pctxrendition->listfrmame[index] == NULL)
-	//	return NULL;
+	if (pPair->listmain[index] == NULL || pPair->listref[index] == NULL)
+		return NULL;
 
 #if 0 //def _DEBUG
 	reference_frame = imread("d:/bmp/reference_frame.bmp");
@@ -2635,10 +2663,10 @@ CV_IMPL void cvCalcDiff(const void* pairframes)
 	next_rendition_frame = imread("d:/bmp/next_rendition_frame.bmp");
 #else
 
-	reference_frame = cv::Mat(height, width, CV_8UC3, pPair->master[index]);
-	rendition_frame = cv::Mat(height, width, CV_8UC3, pPair->rendition[index]);
+	reference_frame = cv::Mat(height, width, CV_8UC3, pPair->listmain[index]);
+	rendition_frame = cv::Mat(height, width, CV_8UC3, pPair->listref[index]);
 
-	next_reference_frame = cv::Mat(height, width, CV_8UC3, pPair->rendition[index+1]);
+	next_reference_frame = cv::Mat(height, width, CV_8UC3, pPair->listref[index+1]);
 	//next_rendition_frame = Mat(height, width, CV_8UC3, pctxrendition->listfrmame[index+1]->data[0]);
 #endif
 
@@ -2716,37 +2744,69 @@ CV_IMPL void cvCalcDiff(const void* pairframes)
 		}
 	}
 
+	return NULL;
+}
+int aggregate_matrix(FramePairList* pPair)
+{
+	if (pPair)
+	{
+		double* pout = pPair->diffmatrix;
+		for (int j = 0; j < LP_FT_FEATURE_MAX; j++)
+		{
+			double* poutstart = pout + j;
+			for (int i = 1; i < pPair->samplecount - 1; i++)
+			{
+				*poutstart += *(poutstart + (int)LP_FT_FEATURE_MAX * i);
+			}
+
+			*poutstart = *poutstart / (pPair->samplecount - 1);
+			//up scale values
+			*poutstart = *poutstart * pPair->width * pPair->height;
+			pPair->finalscore[j] = *poutstart;
+		}
+	}
+	return 0;
 }
 
-CV_IMPL void cvCalcDiffMatrix(const void* pairframes)
+CV_IMPL int cvCalcDiffMatrix(void* pairframes)
 {
+	
+	FramePairList* pPair = (FramePairList*)pairframes;
+	if (pPair == NULL) return -1;
 
-	FramePair* pPair = (FramePair*)pairframes;
-	if (pPair == NULL) return;
-#if 0
-
-	int i, ncount;
-	FramePair* pPair = (FramePair*)pairframes;
+	int ret = 0;
+	int i, ncount;	
 	pthread_t threads[MAX_NUM_THREADS];
-	//make feature matrix(feature * samplecount)	
+	ncount = pPair->samplecount - 1;	
+
+	PairArg* pairinfo = (PairArg*)malloc(sizeof(PairArg) * ncount);
+	for (i = 0; i < ncount; i++)
+	{
+		pairinfo[i].pairlist = pPair;		
+		pairinfo[i].index = i;
+	}
 #ifdef USE_MULTI_THREAD
 	for (i = 0; i < ncount; i++) {
-		if (pthread_create(&threads[i], NULL, cvCalcDiff, (void *)&pairinfo[i])) {
-			fprintf(stderr, "Error create thread id %d\n", i);
+		if (pthread_create(&threads[i], NULL, calc_framediff, (void *)&pairinfo[i])) {
+			fprintf(stderr, "Error create thread id %d\n", i);	
+			ret = -1;
 		}
 	}
 	for (i = 0; i < ncount; i++) {
 		if (pthread_join(threads[i], NULL)) {
 			fprintf(stderr, "Error joining thread id %d\n", i);
+			ret = -1;
 		}
 	}
 #else
 	for (int i = 0; i < pPair->samplecount - 1; i++)
 	{
-		cvCalcDiff((void *)pPair);
+		calc_framediff((void *)&pairinfo[i]);
 	}
 #endif
-
-#endif
+	//aggregate score matrix
+	aggregate_matrix(pPair);
+	
+	return ret;
 }
 /* End of file. */

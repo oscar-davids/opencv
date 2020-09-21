@@ -615,10 +615,10 @@ CVAPI(CvSeq*) cvHoughCircles( CvArr* image, void* circle_storage,
 /* Fits a line into set of 2d or 3d points in a robust way (M-estimator technique) */
 CVAPI(void)  cvFitLine( const CvArr* points, int dist_type, double param,
                         double reps, double aeps, float* line );
-						
-CVAPI(void)  cvCalcDiff(const void* pairframes);
 
-CVAPI(void)  cvCalcDiffMatrix(const void* pairframes);
+/*	Calculate difference feature matrix and score beetween two video fame buffer list
+	return value 0: success -1: fail */
+CVAPI(int)   cvCalcDiffMatrix(void* pairframes);
 
 #ifdef __cplusplus
 }
