@@ -954,7 +954,7 @@ Ptr<BaseRowFilter_GPU> cv::gpu::getLinearRowFilter_GPU(int srcType, int bufType,
     normalizeKernel(rowKernel, gpu_row_krnl, CV_32F);
 
     const int ksize = gpu_row_krnl.cols;
-    CV_Assert( ksize > 0 && ksize <= 32 );
+    CV_Assert( ksize > 0 && ksize <= 35 );//oscar 32->35
 
     normalizeAnchor(anchor, ksize);
 
@@ -1072,7 +1072,7 @@ Ptr<BaseColumnFilter_GPU> cv::gpu::getLinearColumnFilter_GPU(int bufType, int ds
     normalizeKernel(columnKernel, gpu_col_krnl, CV_32F);
 
     const int ksize = gpu_col_krnl.cols;
-    CV_Assert(ksize > 0 && ksize <= 32);
+    CV_Assert(ksize > 0 && ksize <= 35);//oscar 32->35
 
     normalizeAnchor(anchor, ksize);
 

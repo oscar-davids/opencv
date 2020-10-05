@@ -2585,41 +2585,6 @@ cvSmooth( const void* srcarr, void* dstarr, int smooth_type,
 #include "pthread.h"
 #endif
 
-#define MAX_FEATURE_NUM		5	//final score array
-#define MAX_NUM_THREADS		20	//max thread count
-#define NORMAL_WIDTH		480	//normalize width
-#define NORMAL_HEIGHT		270	//normalize height
-
-#define USE_MULTI_THREAD
-
-
-typedef enum featureType {
-	LP_FT_DCT = 0,
-	LP_FT_GAUSSIAN_MSE,
-	LP_FT_GAUSSIAN_DIFF,
-	LP_FT_GAUSSIAN_TH_DIFF,
-	LP_FT_HISTOGRAM_DISTANCE,
-	LP_FT_FEATURE_MAX,
-} featureType;
-
-typedef struct FramePairList {
-	int		width;
-	int		height;
-	int		normalw;
-	int		normalh;
-	int		samplecount;
-	int		featurecount;
-	void	**listmain;
-	void	**listref;
-	double *diffmatrix; //used in Opencv engine
-	double	*finalscore;
-} FramePairList;
-
-typedef struct PairArg {
-	FramePairList*	pairlist;
-	int			index;
-} PairArg;
-
 void* calc_framediff(void* pInfo)
 {	
 	PairArg* pArg = (PairArg*)pInfo;
@@ -2648,8 +2613,8 @@ void* calc_framediff(void* pInfo)
 	const float* ranges[] = { h_ranges, s_ranges, v_ranges };
 	float *phis_a, *phis_b;
 	deps = 1e-10;
-	width = NORMAL_WIDTH;
-	height = NORMAL_HEIGHT;
+	width = pPair->normalw;
+	height = pPair->normalh;
 
 	double* pout = pPair->diffmatrix + index * MAX_FEATURE_NUM;
 

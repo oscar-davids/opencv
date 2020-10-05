@@ -145,6 +145,36 @@ namespace cv { namespace gpu { namespace device
             }
         }
 
+		__global__ void do_dct2(float *f, float *F , int nw, int nh) {
+						
+			int tidy = blockIdx.x*blockDim.x + threadIdx.x;
+			int tidx = blockIdx.y*blockDim.y + threadIdx.y;
+			int index = tidx * nw + tidy;
+
+			int i;
+			float tmp;
+			float beta, alfa;
+			if (tidx == 0)
+				beta = ::sqrtf(1.0 / nw);
+			else
+				beta = ::sqrtf(2.0 / nw);
+			if (tidy == 0)
+				alfa = ::sqrtf(1.0 / nh);
+			else
+				alfa = ::sqrtf(2.0 / nh);
+			if (tidx < nw && tidy < nh)
+			{
+				for (i = 0; i < nw*nh; i++)
+				{
+					int x = i / nh;
+					int y = i % nw;
+					tmp += (f[i])*::cosf((2.0 * x + 1)*tidx*M_PI / (2.0*nw))*
+						::cosf((2 * y + 1)*tidy*M_PI / (2.0*nh));
+				}
+				F[index] = alfa * beta * tmp;
+			}
+		}
+
         void meanShiftFiltering_gpu(const PtrStepSzb& src, PtrStepSzb dst, int sp, int sr, int maxIter, float eps, cudaStream_t stream)
         {
             dim3 grid(1, 1, 1);
@@ -182,7 +212,19 @@ namespace cv { namespace gpu { namespace device
 
             //cudaSafeCall( cudaUnbindTexture( tex_meanshift ) );
         }
+		
+		void dct2d_gpu(const PtrStepSzf& src, PtrStepSzf dst, int nw, int nh)
+		{	
+			dim3 grid(1, 1, 1);
+			dim3 threads(32, 8, 1);
+			grid.x = divUp(src.cols, threads.x);
+			grid.y = divUp(src.rows, threads.y);
 
+			do_dct2 <<< grid, threads >>> (src.data, dst.data, nw, nh);
+			cudaSafeCall(cudaGetLastError());
+
+			cudaSafeCall(cudaDeviceSynchronize());
+		}
         /////////////////////////////////// drawColorDisp ///////////////////////////////////////////////
 
         template <typename T>

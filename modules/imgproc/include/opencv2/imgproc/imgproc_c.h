@@ -46,6 +46,38 @@
 #include "opencv2/core/core_c.h"
 #include "opencv2/imgproc/types_c.h"
 
+#define MAX_FEATURE_NUM		5	//final score array
+#define MAX_NUM_THREADS		20	//max thread count
+#define USE_MULTI_THREAD	1	//use mutithreading
+
+typedef enum featureType {
+	LP_FT_DCT = 0,
+	LP_FT_GAUSSIAN_MSE,
+	LP_FT_GAUSSIAN_DIFF,
+	LP_FT_GAUSSIAN_TH_DIFF,
+	LP_FT_HISTOGRAM_DISTANCE,
+	LP_FT_FEATURE_MAX,
+} featureType;
+
+typedef struct FramePairList {
+	int		width;
+	int		height;
+	int		normalw;
+	int		normalh;
+	int		samplecount;
+	int		featurecount;
+	void	**listmain;
+	void	**listref;
+	double *diffmatrix; //used in Opencv engine
+	double	*finalscore;
+} FramePairList;
+
+typedef struct PairArg {
+	FramePairList*	pairlist;
+	int			index;
+} PairArg;
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -619,6 +651,8 @@ CVAPI(void)  cvFitLine( const CvArr* points, int dist_type, double param,
 /*	Calculate difference feature matrix and score beetween two video fame buffer list
 	return value 0: success -1: fail */
 CVAPI(int)   cvCalcDiffMatrix(void* pairframes);
+
+CVAPI(int)   cvCalcDiffMatrixwithCuda(void* pairframes);
 
 #ifdef __cplusplus
 }

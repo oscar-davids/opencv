@@ -50,7 +50,7 @@ using namespace cv::gpu::device;
 
 namespace row_filter
 {
-    #define MAX_KERNEL_SIZE 32
+    #define MAX_KERNEL_SIZE 36 //oscar 32->36
 
     __constant__ float c_kernel[MAX_KERNEL_SIZE];
 
@@ -362,7 +362,7 @@ namespace filter
             }
         };
 #else
-        static const caller_t callers[5][33] =
+        static const caller_t callers[5][36] = //oscar 33->36
         {
             {
                 0,
@@ -397,7 +397,10 @@ namespace filter
                 row_filter::caller<29, T, D, BrdRowReflect101>,
                 row_filter::caller<30, T, D, BrdRowReflect101>,
                 row_filter::caller<31, T, D, BrdRowReflect101>,
-                row_filter::caller<32, T, D, BrdRowReflect101>
+                row_filter::caller<32, T, D, BrdRowReflect101>,
+				row_filter::caller<33, T, D, BrdRowReflect101>,
+				row_filter::caller<34, T, D, BrdRowReflect101>,
+				row_filter::caller<35, T, D, BrdRowReflect101>
             },
             {
                 0,
@@ -432,7 +435,10 @@ namespace filter
                 row_filter::caller<29, T, D, BrdRowReplicate>,
                 row_filter::caller<30, T, D, BrdRowReplicate>,
                 row_filter::caller<31, T, D, BrdRowReplicate>,
-                row_filter::caller<32, T, D, BrdRowReplicate>
+                row_filter::caller<32, T, D, BrdRowReplicate>,
+				row_filter::caller<33, T, D, BrdRowReplicate>,
+				row_filter::caller<34, T, D, BrdRowReplicate>,
+				row_filter::caller<35, T, D, BrdRowReplicate>
             },
             {
                 0,
@@ -467,7 +473,10 @@ namespace filter
                 row_filter::caller<29, T, D, BrdRowConstant>,
                 row_filter::caller<30, T, D, BrdRowConstant>,
                 row_filter::caller<31, T, D, BrdRowConstant>,
-                row_filter::caller<32, T, D, BrdRowConstant>
+                row_filter::caller<32, T, D, BrdRowConstant>,
+				row_filter::caller<33, T, D, BrdRowConstant>,
+				row_filter::caller<34, T, D, BrdRowConstant>,
+				row_filter::caller<35, T, D, BrdRowConstant>
             },
             {
                 0,
@@ -502,7 +511,10 @@ namespace filter
                 row_filter::caller<29, T, D, BrdRowReflect>,
                 row_filter::caller<30, T, D, BrdRowReflect>,
                 row_filter::caller<31, T, D, BrdRowReflect>,
-                row_filter::caller<32, T, D, BrdRowReflect>
+                row_filter::caller<32, T, D, BrdRowReflect>,
+				row_filter::caller<33, T, D, BrdRowReflect>,
+				row_filter::caller<34, T, D, BrdRowReflect>,
+				row_filter::caller<35, T, D, BrdRowReflect>
             },
             {
                 0,
@@ -537,7 +549,10 @@ namespace filter
                 row_filter::caller<29, T, D, BrdRowWrap>,
                 row_filter::caller<30, T, D, BrdRowWrap>,
                 row_filter::caller<31, T, D, BrdRowWrap>,
-                row_filter::caller<32, T, D, BrdRowWrap>
+                row_filter::caller<32, T, D, BrdRowWrap>,
+				row_filter::caller<33, T, D, BrdRowWrap>,
+				row_filter::caller<34, T, D, BrdRowWrap>,
+				row_filter::caller<35, T, D, BrdRowWrap>
             }
         };
 #endif

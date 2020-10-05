@@ -50,7 +50,7 @@ using namespace cv::gpu::device;
 
 namespace column_filter
 {
-    #define MAX_KERNEL_SIZE 32
+    #define MAX_KERNEL_SIZE 36 //oscar 32->36
 
     __constant__ float c_kernel[MAX_KERNEL_SIZE];
 
@@ -363,7 +363,7 @@ namespace filter
             }
         };
 #else
-        static const caller_t callers[5][33] =
+        static const caller_t callers[5][36] = //oscar 33->36
         {
             {
                 0,
@@ -398,7 +398,10 @@ namespace filter
                 column_filter::caller<29, T, D, BrdColReflect101>,
                 column_filter::caller<30, T, D, BrdColReflect101>,
                 column_filter::caller<31, T, D, BrdColReflect101>,
-                column_filter::caller<32, T, D, BrdColReflect101>
+                column_filter::caller<32, T, D, BrdColReflect101>,
+				column_filter::caller<33, T, D, BrdColReflect101>,
+				column_filter::caller<34, T, D, BrdColReflect101>,
+				column_filter::caller<35, T, D, BrdColReflect101>
             },
             {
                 0,
@@ -433,7 +436,10 @@ namespace filter
                 column_filter::caller<29, T, D, BrdColReplicate>,
                 column_filter::caller<30, T, D, BrdColReplicate>,
                 column_filter::caller<31, T, D, BrdColReplicate>,
-                column_filter::caller<32, T, D, BrdColReplicate>
+                column_filter::caller<32, T, D, BrdColReplicate>,
+				column_filter::caller<33, T, D, BrdColReplicate>,
+				column_filter::caller<34, T, D, BrdColReplicate>,
+				column_filter::caller<35, T, D, BrdColReplicate>
             },
             {
                 0,
@@ -468,7 +474,10 @@ namespace filter
                 column_filter::caller<29, T, D, BrdColConstant>,
                 column_filter::caller<30, T, D, BrdColConstant>,
                 column_filter::caller<31, T, D, BrdColConstant>,
-                column_filter::caller<32, T, D, BrdColConstant>
+                column_filter::caller<32, T, D, BrdColConstant>,
+				column_filter::caller<33, T, D, BrdColConstant>,
+				column_filter::caller<34, T, D, BrdColConstant>,
+				column_filter::caller<35, T, D, BrdColConstant>
             },
             {
                 0,
@@ -503,7 +512,10 @@ namespace filter
                 column_filter::caller<29, T, D, BrdColReflect>,
                 column_filter::caller<30, T, D, BrdColReflect>,
                 column_filter::caller<31, T, D, BrdColReflect>,
-                column_filter::caller<32, T, D, BrdColReflect>
+                column_filter::caller<32, T, D, BrdColReflect>,
+				column_filter::caller<33, T, D, BrdColReflect>,
+				column_filter::caller<34, T, D, BrdColReflect>,
+				column_filter::caller<35, T, D, BrdColReflect>
             },
             {
                 0,
@@ -538,7 +550,10 @@ namespace filter
                 column_filter::caller<29, T, D, BrdColWrap>,
                 column_filter::caller<30, T, D, BrdColWrap>,
                 column_filter::caller<31, T, D, BrdColWrap>,
-                column_filter::caller<32, T, D, BrdColWrap>
+                column_filter::caller<32, T, D, BrdColWrap>,
+				column_filter::caller<33, T, D, BrdColWrap>,
+				column_filter::caller<34, T, D, BrdColWrap>,
+				column_filter::caller<35, T, D, BrdColWrap>
             }
         };
 #endif

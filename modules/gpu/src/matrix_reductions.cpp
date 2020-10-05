@@ -120,7 +120,7 @@ void cv::gpu::meanStdDev(const GpuMat& src, Scalar& mean, Scalar& stddev)
 
 void cv::gpu::meanStdDev(const GpuMat& src, Scalar& mean, Scalar& stddev, GpuMat& buf)
 {
-    CV_Assert(src.type() == CV_8UC1);
+    CV_Assert(src.type() == CV_8UC1 || src.type() == CV_32SC1);
 
     if (!deviceSupports(FEATURE_SET_COMPUTE_13))
         CV_Error(CV_StsNotImplemented, "Not sufficient compute capebility");
@@ -132,15 +132,28 @@ void cv::gpu::meanStdDev(const GpuMat& src, Scalar& mean, Scalar& stddev, GpuMat
     DeviceBuffer dbuf(2);
 
     int bufSize;
+	if (src.type() == CV_8UC1) {
 #if (CUDART_VERSION <= 4020)
-    nppSafeCall( nppiMeanStdDev8uC1RGetBufferHostSize(sz, &bufSize) );
+		nppSafeCall(nppiMeanStdDev8uC1RGetBufferHostSize(sz, &bufSize));
 #else
-    nppSafeCall( nppiMeanStdDevGetBufferHostSize_8u_C1R(sz, &bufSize) );
+		nppSafeCall(nppiMeanStdDevGetBufferHostSize_8u_C1R(sz, &bufSize));
 #endif
 
-    ensureSizeIsEnough(1, bufSize, CV_8UC1, buf);
+		ensureSizeIsEnough(1, bufSize, CV_8UC1, buf);
 
-    nppSafeCall( nppiMean_StdDev_8u_C1R(src.ptr<Npp8u>(), static_cast<int>(src.step), sz, buf.ptr<Npp8u>(), dbuf, (double*)dbuf + 1) );
+		nppSafeCall(nppiMean_StdDev_8u_C1R(src.ptr<Npp8u>(), static_cast<int>(src.step), sz, buf.ptr<Npp8u>(), dbuf, (double*)dbuf + 1));
+	}
+	else { //CV_32SC1
+#if (CUDART_VERSION <= 4020)
+		nppSafeCall(nppiMeanStdDev32fC1RGetBufferHostSize(sz, &bufSize));
+#else
+		nppSafeCall(nppiMeanStdDevGetBufferHostSize_32f_C1R(sz, &bufSize));
+#endif
+
+		ensureSizeIsEnough(1, bufSize, CV_32SC1, buf);
+		
+		nppSafeCall(nppiMean_StdDev_32f_C1R(src.ptr<Npp32f>(), static_cast<int>(src.step), sz, buf.ptr<Npp8u>(), dbuf, (double*)dbuf + 1));
+	}
 
     cudaSafeCall( cudaDeviceSynchronize() );
 
