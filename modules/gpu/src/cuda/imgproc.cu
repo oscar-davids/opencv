@@ -145,33 +145,72 @@ namespace cv { namespace gpu { namespace device
             }
         }
 
-		__global__ void do_dct2(float *f, float *F , int nw, int nh) {
-						
-			int tidy = blockIdx.x*blockDim.x + threadIdx.x;
-			int tidx = blockIdx.y*blockDim.y + threadIdx.y;
-			int index = tidx * nw + tidy;
-
+		__global__ void do_dct2(float *f, float *F , int nwidth, int nheight) {
+			
+			int tidx = blockIdx.x*blockDim.x + threadIdx.x;
+			int tidy = blockIdx.y*blockDim.y + threadIdx.y;
+			int index = tidy * nwidth + tidx;
 			int i;
 			float tmp;
 			float beta, alfa;
 			if (tidx == 0)
-				beta = ::sqrtf(1.0 / nw);
+				beta = ::sqrt(1.0 / nwidth);
 			else
-				beta = ::sqrtf(2.0 / nw);
+				beta = ::sqrt(2.0 / nwidth);
+
 			if (tidy == 0)
-				alfa = ::sqrtf(1.0 / nh);
+				alfa = ::sqrt(1.0 / nheight);
 			else
-				alfa = ::sqrtf(2.0 / nh);
-			if (tidx < nw && tidy < nh)
+				alfa = ::sqrt(2.0 / nheight);
+
+			if (tidx < nwidth && tidy < nheight)
 			{
-				for (i = 0; i < nw*nh; i++)
+				for (i = 0; i < nwidth * nheight; i++)
 				{
-					int x = i / nh;
-					int y = i % nw;
-					tmp += (f[i])*::cosf((2.0 * x + 1)*tidx*M_PI / (2.0*nw))*
-						::cosf((2 * y + 1)*tidy*M_PI / (2.0*nh));
+					int x = i % nwidth;
+					int y = i / nwidth;
+					tmp += f[i] * ::cos((2 * x + 1)*tidx*M_PI / (2.0*nwidth))*
+						::cos((2 * y + 1)*tidy*M_PI / (2.0*nheight));
 				}
-				F[index] = alfa * beta * tmp;
+				F[index] = (float)alfa * beta * tmp;
+			}			
+		}
+
+		__global__ void dct2(const PtrStepSzf src, PtrStepSzf dst, int nwidth, int nheight) {
+
+			int tidx = blockIdx.x*blockDim.x + threadIdx.x;
+			int tidy = blockIdx.y*blockDim.y + threadIdx.y;
+			int index = tidy * nwidth + tidx;
+			int i;
+			float tmp = 0.0f;
+			float beta, alfa;
+			if (tidx == 0)
+				beta = ::sqrt(1.0 / nwidth);
+			else
+				beta = ::sqrt(2.0 / nwidth);
+
+			if (tidy == 0)
+				alfa = ::sqrt(1.0 / nheight);
+			else
+				alfa = ::sqrt(2.0 / nheight);
+
+			if (tidx < nwidth && tidy < nheight)
+			{
+				for (i = 0; i < nwidth * nheight; i++)
+				{
+					int x = i % nwidth;
+					int y = i / nwidth;
+					float fxcos = (float)((2.0f * x + 1)*tidx*CV_PI_F) / (2.0f*nwidth);
+					float fycos = (float)((2.0f * y + 1)*tidy*CV_PI_F) / (2.0f*nheight);
+					tmp += (src.ptr(y))[x] * ::cosf(fxcos) * ::cosf(fycos);
+				}
+				dst(tidy, tidx) = alfa * beta * tmp;
+				//debug
+				//if(tidx == tidy)
+				//	dst(tidy, tidx) = 0;
+				//else
+				//	dst(tidy, tidx) = (src.ptr(tidy))[tidx];
+
 			}
 		}
 
@@ -216,11 +255,13 @@ namespace cv { namespace gpu { namespace device
 		void dct2d_gpu(const PtrStepSzf& src, PtrStepSzf dst, int nw, int nh)
 		{	
 			dim3 grid(1, 1, 1);
-			dim3 threads(32, 8, 1);
-			grid.x = divUp(src.cols, threads.x);
-			grid.y = divUp(src.rows, threads.y);
+			dim3 dimblock(16, 16);
 
-			do_dct2 <<< grid, threads >>> (src.data, dst.data, nw, nh);
+			grid.x = divUp(src.cols, dimblock.x);
+			grid.y = divUp(src.rows, dimblock.y);
+
+			//do_dct2 <<< grid, dimblock >>> (src.data, dst.data, nw, nh);
+			dct2 <<< grid, dimblock >>> (src, dst, nw, nh);
 			cudaSafeCall(cudaGetLastError());
 
 			cudaSafeCall(cudaDeviceSynchronize());

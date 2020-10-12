@@ -41,6 +41,9 @@
 //M*/
 
 #include "precomp.hpp"
+#ifdef _DEBUG
+//#include "opencv2/highgui/highgui.hpp"
+#endif
 
 /*
  * This file includes the code, contributed by Simon Perreault
@@ -2622,10 +2625,10 @@ void* calc_framediff(void* pInfo)
 		return NULL;
 
 #if 0 //def _DEBUG
-	reference_frame = imread("d:/bmp/reference_frame.bmp");
-	rendition_frame = imread("d:/bmp/rendition_frame.bmp");
-	next_reference_frame = imread("d:/bmp/next_reference_frame.bmp");
-	next_rendition_frame = imread("d:/bmp/next_rendition_frame.bmp");
+	reference_frame = cv::imread("d:/tmp/bmptest/reference_frame.bmp");
+	rendition_frame = cv::imread("d:/tmp/bmptest/rendition_frame.bmp");
+	next_reference_frame = cv::imread("d:/tmp/bmptest/next_reference_frame.bmp");
+	next_rendition_frame = cv::imread("d:/tmp/bmptest/next_rendition_frame.bmp");
 #else
 
 	reference_frame = cv::Mat(height, width, CV_8UC3, pPair->listmain[index]);
@@ -2635,11 +2638,13 @@ void* calc_framediff(void* pInfo)
 	//next_rendition_frame = Mat(height, width, CV_8UC3, pctxrendition->listfrmame[index+1]->data[0]);
 #endif
 
+	
+
 #if 0 //def _DEBUG
-	imwrite("d:/reference_frame.bmp", reference_frame);
-	imwrite("d:/rendition_frame.bmp", rendition_frame);
-	imwrite("d:/next_reference_frame.bmp", next_reference_frame);
-	imwrite("d:/next_rendition_frame.bmp", next_rendition_frame);
+	cv::imwrite("d:/tmp/bmptest/reference_frame.bmp", reference_frame);
+	cv::imwrite("d:/tmp/bmptest/rendition_frame.bmp", rendition_frame);
+	cv::imwrite("d:/tmp/bmptest/next_reference_frame.bmp", next_reference_frame);
+	cv::imwrite("d:/tmp/bmptest/next_rendition_frame.bmp", next_rendition_frame);
 #endif
 
 	cv::cvtColor(reference_frame, reference_frame_v, cv::COLOR_BGR2HSV);

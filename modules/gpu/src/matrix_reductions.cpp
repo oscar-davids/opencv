@@ -120,7 +120,7 @@ void cv::gpu::meanStdDev(const GpuMat& src, Scalar& mean, Scalar& stddev)
 
 void cv::gpu::meanStdDev(const GpuMat& src, Scalar& mean, Scalar& stddev, GpuMat& buf)
 {
-    CV_Assert(src.type() == CV_8UC1 || src.type() == CV_32SC1);
+    CV_Assert(src.type() == CV_8UC1 || src.type() == CV_32FC1);
 
     if (!deviceSupports(FEATURE_SET_COMPUTE_13))
         CV_Error(CV_StsNotImplemented, "Not sufficient compute capebility");

@@ -41,6 +41,9 @@
 //M*/
 
 #include "precomp.hpp"
+#ifdef _DEBUG
+#include "opencv2/highgui/highgui.hpp"
+#endif
 
 using namespace cv;
 using namespace cv::gpu;
@@ -1796,6 +1799,180 @@ cv::Ptr<cv::gpu::CLAHE> cv::gpu::createCLAHE(double clipLimit, cv::Size tileGrid
 #endif
 
 #ifdef HAVE_CUDA
+#define USE_CUDA_OPTIMIZED	1
+
+struct BufferGpuDiff                                     // Optimized GPU versions
+{   // Data allocations are very expensive on GPU. Use a buffer to solve: allocate once reuse later.
+	cv::gpu::GpuMat gmatreference_frame_v, gmatrendition_frame_v, gmatnext_reference_frame_v;
+	cv::gpu::GpuMat gmatgauss_reference_frame, gmatgauss_rendition_frame, gmatdifference_frame,
+		gmatdifference_frame_p, gmatemporal_difference, gmathreshold_frame;
+	cv::gpu::GpuMat gmatreference_dct, gmatrendition_dct, gmatdiff_dct;
+};
+
+BufferGpuDiff BufGpuCalc[MAX_NUM_THREADS];
+
+void* calc_framediffcuda_opt(void* pInfo)
+{
+	if (pInfo == NULL) return NULL;
+	PairArg* pArg = (PairArg*)pInfo;
+	if (pArg == NULL) return NULL;
+
+	FramePairList* pPair = pArg->pairlist;
+	int index = pArg->index;
+
+	int x, y;
+	//LP_FT_DCT, LP_FT_GAUSSIAN_MSE, LP_FT_GAUSSIAN_DIFF, LP_FT_GAUSSIAN_TH_DIFF, LP_FT_HISTOGRAM_DISTANCE
+	Mat reference_frame, rendition_frame, next_reference_frame, next_rendition_frame;
+	Mat reference_frame_v, rendition_frame_v, next_reference_frame_v, next_rendition_frame_v;
+	Mat reference_frame_float, rendition_frame_float, reference_dct, rendition_dct;
+	double dmin, dmax, deps, chi_dist, dtmpe;
+	Mat gauss_reference_frame, gauss_rendition_frame, difference_frame, threshold_frame, temporal_difference, difference_frame_p;
+
+	//sigma = 4
+	//gauss_reference_frame = gaussian(reference_frame_v, sigma = sigma)
+	//gauss_rendition_frame = gaussian(rendition_frame_v, sigma = sigma)
+	double dsum, difference, dmse, dabssum;
+	int width, height, i, j;
+	Scalar mean, stddev, ssum;
+	MatND hist_a, hist_b;
+	int channels[] = { 0, 1, 2 };
+	int bins[3] = { 8, 8, 8 };
+	int histSize[] = { 256, 256, 256 };
+	float h_ranges[] = { 0, 256 };
+	float s_ranges[] = { 0, 256 };
+	float v_ranges[] = { 0, 256 };
+	const float* ranges[] = { h_ranges, s_ranges, v_ranges };
+	float *phis_a, *phis_b;
+	deps = 1e-10;
+	width = pPair->normalw;
+	height = pPair->normalh;	
+
+	if (pPair->listmain[index] == NULL || pPair->listref[index] == NULL)
+		return NULL;
+
+#if USE_OPENCV_READ
+	reference_frame = imread("d:/tmp/bmptest/reference_frame.bmp");
+	rendition_frame = imread("d:/tmp/bmptest/rendition_frame.bmp");
+	next_reference_frame = imread("d:/tmp/bmptest/next_reference_frame.bmp");
+	next_rendition_frame = imread("d:/tmp/bmptest/next_rendition_frame.bmp");
+#else
+
+	reference_frame = Mat(height, width, CV_8UC3, pPair->listmain[index]);
+	rendition_frame = Mat(height, width, CV_8UC3, pPair->listref[index]);
+
+	next_reference_frame = Mat(height, width, CV_8UC3, pPair->listref[index + 1]);
+	//next_rendition_frame = Mat(height, width, CV_8UC3, pctxrendition->listfrmame[index+1]->data[0]);
+#endif
+
+#if USE_OPENCV_WRITE
+	imwrite("d:/tmp/bmptest/reference_frame.bmp", reference_frame);
+	imwrite("d:/tmp/bmptest/rendition_frame.bmp", rendition_frame);
+	imwrite("d:/tmp/bmptest/next_reference_frame.bmp", next_reference_frame);
+	imwrite("d:/tmp/bmptest/next_rendition_frame.bmp", next_rendition_frame);
+#endif
+
+	cvtColor(reference_frame, reference_frame_v, COLOR_BGR2HSV);
+	cvtColor(rendition_frame, rendition_frame_v, COLOR_BGR2HSV);
+	cvtColor(next_reference_frame, next_reference_frame_v, COLOR_BGR2HSV);
+	//cvtColor(next_rendition_frame, next_rendition_frame_v, COLOR_BGR2HSV);
+
+	extractChannel(reference_frame_v, reference_frame_v, 2);
+	extractChannel(rendition_frame_v, rendition_frame_v, 2);
+	extractChannel(next_reference_frame_v, next_reference_frame_v, 2);
+	//extractChannel(next_rendition_frame_v, next_rendition_frame_v, 2);
+
+	reference_frame_v.convertTo(reference_frame_v, CV_32FC1, 1.0 / 255.0);
+	rendition_frame_v.convertTo(rendition_frame_v, CV_32FC1, 1.0 / 255.0);
+	next_reference_frame_v.convertTo(next_reference_frame_v, CV_32FC1, 1.0 / 255.0);
+
+	BufGpuCalc[index].gmatreference_frame_v.upload(reference_frame_v);
+	BufGpuCalc[index].gmatrendition_frame_v.upload(rendition_frame_v);
+	BufGpuCalc[index].gmatnext_reference_frame_v.upload(next_reference_frame_v);
+
+	//if opencv version > 2.x
+	//cv::Ptr<cv::cuda::Filter> filter = cv::cuda::createGaussianFilter(reference_frame_v.type(), reference_frame_v.type(), Size(33, 33), 4);
+	//filter->apply(src, dst);
+
+	cv::gpu::GaussianBlur(BufGpuCalc[index].gmatreference_frame_v, BufGpuCalc[index].gmatgauss_reference_frame, Size(33, 33), 4, 4);
+	cv::gpu::GaussianBlur(BufGpuCalc[index].gmatrendition_frame_v, BufGpuCalc[index].gmatgauss_rendition_frame, Size(33, 33), 4, 4);
+
+#if USE_DEBUG_BMP
+	//imwrite("d:/tmp/bmptest/gpu_gauss_reference_frame.bmp", gauss_reference_frame);
+	//imwrite("d:/tmp/bmptest/gpu_gauss_rendition_frame.bmp", gauss_rendition_frame);	
+	Mat tmp_frame;
+	BufGpuCalc[index].gmatgauss_reference_frame.download(tmp_frame);
+	WriteFloatBmp("d:/tmp/bmptest/gpu_gauss_reference_frame.bmp", 480, 270, (float*)tmp_frame.data);
+	BufGpuCalc[index].gmatgauss_rendition_frame.download(tmp_frame);
+	WriteFloatBmp("d:/tmp/bmptest/gpu_gauss_rendition_frame.bmp", 480, 270, (float*)tmp_frame.data);
+#endif
+
+	dsum = dabssum = 0.0;	
+	double* pout = pPair->diffmatrix + index * MAX_FEATURE_NUM;
+
+	cv::gpu::absdiff(BufGpuCalc[index].gmatgauss_reference_frame, BufGpuCalc[index].gmatgauss_rendition_frame, BufGpuCalc[index].gmatdifference_frame);
+
+	for (i = 0; i < LP_FT_FEATURE_MAX; i++)
+	{
+		switch (i)
+		{
+		case LP_FT_DCT:
+#if 0
+			cv::gpu::dct2d(BufGpuCalc[index].gmatreference_frame_v, BufGpuCalc[index].gmatreference_dct);
+			cv::gpu::dct2d(BufGpuCalc[index].gmatrendition_frame_v, BufGpuCalc[index].gmatrendition_dct);
+
+#if USE_DEBUG_BMP
+			//imwrite("d:/tmp/bmptest/gpu_gauss_reference_frame.bmp", gauss_reference_frame);
+			//imwrite("d:/tmp/bmptest/gpu_gauss_rendition_frame.bmp", gauss_rendition_frame);
+			BufGpuCalc[index].gmatreference_dct.download(tmp_frame);
+			WriteFloatBmp("d:/tmp/bmptest/gpu_dct_reference_frame.bmp", 480, 270, (float*)tmp_frame.data);
+			BufGpuCalc[index].gmatrendition_dct.download(tmp_frame);
+			WriteFloatBmp("d:/tmp/bmptest/gpu_dct_rendition_frame.bmp", 480, 270, (float*)tmp_frame.data);
+#endif
+			cv::gpu::subtract(BufGpuCalc[index].gmatreference_dct, BufGpuCalc[index].gmatrendition_dct, BufGpuCalc[index].gmatdiff_dct);
+			cv::gpu::minMax(BufGpuCalc[index].gmatdiff_dct, &dmin, &dmax);
+			*(pout + i) = dmax;
+#endif 
+			*(pout + i) = 0.0;
+			break;
+		case LP_FT_GAUSSIAN_MSE:
+			cv::gpu::pow(BufGpuCalc[index].gmatdifference_frame, 2.0, BufGpuCalc[index].gmatdifference_frame_p);
+			dmse = cv::gpu::sum(BufGpuCalc[index].gmatdifference_frame_p).val[0] / (width*height);
+			*(pout + i) = dmse;
+			break;
+		case LP_FT_GAUSSIAN_DIFF:
+			*(pout + i) = cv::gpu::sum(BufGpuCalc[index].gmatdifference_frame).val[0];
+			break;
+		case LP_FT_GAUSSIAN_TH_DIFF:
+			cv::gpu::absdiff(BufGpuCalc[index].gmatnext_reference_frame_v, BufGpuCalc[index].gmatrendition_frame_v, BufGpuCalc[index].gmatemporal_difference);
+			cv::gpu::meanStdDev(BufGpuCalc[index].gmatemporal_difference, mean, stddev);
+			cv::gpu::threshold(BufGpuCalc[index].gmatdifference_frame, BufGpuCalc[index].gmathreshold_frame, stddev.val[0], 1, THRESH_BINARY);
+			ssum = cv::gpu::sum(BufGpuCalc[index].gmathreshold_frame);
+			*(pout + i) = ssum.val[0];
+
+			break;
+		case LP_FT_HISTOGRAM_DISTANCE:
+			calcHist(&reference_frame, 1, channels, Mat(), hist_a, 3, bins, ranges, true, false);
+			normalize(hist_a, hist_a); phis_a = (float*)hist_a.data;
+
+			calcHist(&rendition_frame, 1, channels, Mat(), hist_b, 3, bins, ranges, true, false);
+			normalize(hist_b, hist_b); phis_b = (float*)hist_b.data;
+			chi_dist = 0.0;
+			for (j = 0; j < 512; j++) {
+				dtmpe = *phis_a - *phis_b;
+				chi_dist += (0.5 * dtmpe * dtmpe / (*phis_a + *phis_b + deps));
+				phis_a++; phis_b++;
+			}
+			*(pout + i) = chi_dist;
+			//*(pout + i) =  compareHist(hist_a, hist_b, HISTCMP_CHISQR);			
+			break;
+		default:
+			break;
+		}
+	}
+
+	return NULL;
+}
+
 void* calc_framediffcuda(void* pInfo)
 {
 	PairArg* pArg = (PairArg*)pInfo;
@@ -1842,10 +2019,10 @@ void* calc_framediffcuda(void* pInfo)
 		return NULL;
 
 #if 0 //def _DEBUG
-	reference_frame = imread("d:/bmp/reference_frame.bmp");
-	rendition_frame = imread("d:/bmp/rendition_frame.bmp");
-	next_reference_frame = imread("d:/bmp/next_reference_frame.bmp");
-	next_rendition_frame = imread("d:/bmp/next_rendition_frame.bmp");
+	reference_frame = cv::imread("d:/tmp/bmptest/reference_frame.bmp");
+	rendition_frame = cv::imread("d:/tmp/bmptest/rendition_frame.bmp");
+	next_reference_frame = cv::imread("d:/tmp/bmptest/next_reference_frame.bmp");
+	next_rendition_frame = cv::imread("d:/tmp/bmptest/next_rendition_frame.bmp");
 #else
 
 	reference_frame = Mat(height, width, CV_8UC3, pPair->listmain[index]);
@@ -1856,10 +2033,10 @@ void* calc_framediffcuda(void* pInfo)
 #endif
 
 #if 0 //def _DEBUG
-	imwrite("d:/reference_frame.bmp", reference_frame);
-	imwrite("d:/rendition_frame.bmp", rendition_frame);
-	imwrite("d:/next_reference_frame.bmp", next_reference_frame);
-	imwrite("d:/next_rendition_frame.bmp", next_rendition_frame);
+	cv::imwrite("d:/tmp/bmptest/reference_frame.bmp", reference_frame);
+	cv::imwrite("d:/tmp/bmptest/rendition_frame.bmp", rendition_frame);
+	cv::imwrite("d:/tmp/bmptest/next_reference_frame.bmp", next_reference_frame);
+	cv::imwrite("d:/tmp/bmptest/next_rendition_frame.bmp", next_rendition_frame);
 #endif
 
 	cvtColor(reference_frame, reference_frame_v, COLOR_BGR2HSV);
@@ -1888,8 +2065,8 @@ void* calc_framediffcuda(void* pInfo)
 	cv::gpu::GaussianBlur(gmatrendition_frame_v, gmatgauss_rendition_frame, Size(33, 33), 4, 4);
 
 #if 0 //def _DEBUG
-	imwrite("d:/c_gauss_reference_frame.bmp", gauss_reference_frame);
-	imwrite("d:/c_gauss_rendition_frame.bmp", gauss_rendition_frame);
+	cv::imwrite("d:/tmp/bmptest/c_gauss_reference_frame.bmp", gauss_reference_frame);
+	cv::imwrite("d:/tmp/bmptest/c_gauss_rendition_frame.bmp", gauss_rendition_frame);
 #endif
 
 	dsum = dabssum = 0.0;	
@@ -1921,11 +2098,6 @@ void* calc_framediffcuda(void* pInfo)
 			cv::gpu::threshold(gmatdifference_frame, gmathreshold_frame, stddev.val[0], 1, THRESH_BINARY);
 			ssum = cv::gpu::sum(gmathreshold_frame);
 			*(pout + i) = ssum.val[0];
-			//absdiff(next_reference_frame_v, rendition_frame_v, temporal_difference);
-			//meanStdDev(temporal_difference, mean, stddev);
-			//threshold(difference_frame, threshold_frame, stddev.val[0], 1, THRESH_BINARY);
-			//ssum = sum(threshold_frame);
-			//*(pout + i) = ssum.val[0];
 			break;
 		case LP_FT_HISTOGRAM_DISTANCE:
 			calcHist(&reference_frame, 1, channels, Mat(), hist_a, 3, bins, ranges, true, false);
@@ -1987,10 +2159,10 @@ void* calc_framediff(void* pInfo)
 		return NULL;
 
 #if 0 //def _DEBUG
-	reference_frame = imread("d:/bmp/reference_frame.bmp");
-	rendition_frame = imread("d:/bmp/rendition_frame.bmp");
-	next_reference_frame = imread("d:/bmp/next_reference_frame.bmp");
-	next_rendition_frame = imread("d:/bmp/next_rendition_frame.bmp");
+	reference_frame = cv::imread("d:/tmp/bmptest/reference_frame.bmp");
+	rendition_frame = cv::imread("d:/tmp/bmptest/rendition_frame.bmp");
+	next_reference_frame = cv::imread("d:/tmp/bmptest/next_reference_frame.bmp");
+	next_rendition_frame = cv::imread("d:/tmp/bmptest/next_rendition_frame.bmp");
 #else
 
 	reference_frame = cv::Mat(height, width, CV_8UC3, pPair->listmain[index]);
@@ -2001,10 +2173,10 @@ void* calc_framediff(void* pInfo)
 #endif
 
 #if 0 //def _DEBUG
-	imwrite("d:/reference_frame.bmp", reference_frame);
-	imwrite("d:/rendition_frame.bmp", rendition_frame);
-	imwrite("d:/next_reference_frame.bmp", next_reference_frame);
-	imwrite("d:/next_rendition_frame.bmp", next_rendition_frame);
+	cv::imwrite("d:/tmp/bmptest/reference_frame.bmp", reference_frame);
+	cv::imwrite("d:/tmp/bmptest/rendition_frame.bmp", rendition_frame);
+	cv::imwrite("d:/tmp/bmptest/next_reference_frame.bmp", next_reference_frame);
+	cv::imwrite("d:/tmp/bmptest/next_rendition_frame.bmp", next_rendition_frame);
 #endif
 
 	cv::cvtColor(reference_frame, reference_frame_v, cv::COLOR_BGR2HSV);
@@ -2120,7 +2292,12 @@ CV_IMPL int cvCalcDiffMatrixwithCuda(void* pairframes)
 	}
 #ifdef USE_MULTI_THREAD
 	for (i = 0; i < ncount; i++) {
-		if (pthread_create(&threads[i], NULL, calc_framediffcuda, (void *)&pairinfo[i])) {
+#if USE_CUDA_OPTIMIZED
+		if (pthread_create(&threads[i], NULL, calc_framediffcuda_opt, (void *)&pairinfo[i]))
+#else
+		if (pthread_create(&threads[i], NULL, calc_framediffcuda, (void *)&pairinfo[i])) 
+#endif
+		{
 			fprintf(stderr, "Error create thread id %d\n", i);
 			ret = -1;
 		}
@@ -2134,7 +2311,11 @@ CV_IMPL int cvCalcDiffMatrixwithCuda(void* pairframes)
 #else
 	for (int i = 0; i < pPair->samplecount - 1; i++)
 	{
+#if USE_CUDA_OPTIMIZED
+		calc_framediffcuda_opt((void *)&pairinfo[i]);
+#else
 		calc_framediffcuda((void *)&pairinfo[i]);
+#endif
 	}
 #endif
 	//aggregate score matrix
