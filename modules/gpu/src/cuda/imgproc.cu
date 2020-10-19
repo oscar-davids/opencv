@@ -145,8 +145,51 @@ namespace cv { namespace gpu { namespace device
             }
         }
 
-		__global__ void do_dct2(float *f, float *F , int nwidth, int nheight) {
-			
+
+        void meanShiftFiltering_gpu(const PtrStepSzb& src, PtrStepSzb dst, int sp, int sr, int maxIter, float eps, cudaStream_t stream)
+        {
+            dim3 grid(1, 1, 1);
+            dim3 threads(32, 8, 1);
+            grid.x = divUp(src.cols, threads.x);
+            grid.y = divUp(src.rows, threads.y);
+
+            cudaChannelFormatDesc desc = cudaCreateChannelDesc<uchar4>();
+            cudaSafeCall( cudaBindTexture2D( 0, tex_meanshift, src.data, desc, src.cols, src.rows, src.step ) );
+
+            meanshift_kernel<<< grid, threads, 0, stream >>>( dst.data, dst.step, dst.cols, dst.rows, sp, sr, maxIter, eps );
+            cudaSafeCall( cudaGetLastError() );
+
+            if (stream == 0)
+                cudaSafeCall( cudaDeviceSynchronize() );
+
+            //cudaSafeCall( cudaUnbindTexture( tex_meanshift ) );
+        }
+
+        void meanShiftProc_gpu(const PtrStepSzb& src, PtrStepSzb dstr, PtrStepSzb dstsp, int sp, int sr, int maxIter, float eps, cudaStream_t stream)
+        {
+            dim3 grid(1, 1, 1);
+            dim3 threads(32, 8, 1);
+            grid.x = divUp(src.cols, threads.x);
+            grid.y = divUp(src.rows, threads.y);
+
+            cudaChannelFormatDesc desc = cudaCreateChannelDesc<uchar4>();
+            cudaSafeCall( cudaBindTexture2D( 0, tex_meanshift, src.data, desc, src.cols, src.rows, src.step ) );
+
+            meanshiftproc_kernel<<< grid, threads, 0, stream >>>( dstr.data, dstr.step, dstsp.data, dstsp.step, dstr.cols, dstr.rows, sp, sr, maxIter, eps );
+            cudaSafeCall( cudaGetLastError() );
+
+            if (stream == 0)
+                cudaSafeCall( cudaDeviceSynchronize() );
+
+            //cudaSafeCall( cudaUnbindTexture( tex_meanshift ) );
+        }
+		
+#define BLOCK_SIZE 16
+#ifndef threads_num
+#define threads_num 256
+#endif
+		__global__ void do_dct2(float *f, float *F, int nwidth, int nheight) {
+
 			int tidx = blockIdx.x*blockDim.x + threadIdx.x;
 			int tidy = blockIdx.y*blockDim.y + threadIdx.y;
 			int index = tidy * nwidth + tidx;
@@ -173,7 +216,7 @@ namespace cv { namespace gpu { namespace device
 						::cos((2 * y + 1)*tidy*M_PI / (2.0*nheight));
 				}
 				F[index] = (float)alfa * beta * tmp;
-			}			
+			}
 		}
 
 		__global__ void dct2(const PtrStepSzf src, PtrStepSzf dst, int nwidth, int nheight) {
@@ -214,46 +257,127 @@ namespace cv { namespace gpu { namespace device
 			}
 		}
 
-        void meanShiftFiltering_gpu(const PtrStepSzb& src, PtrStepSzb dst, int sp, int sr, int maxIter, float eps, cudaStream_t stream)
-        {
-            dim3 grid(1, 1, 1);
-            dim3 threads(32, 8, 1);
-            grid.x = divUp(src.cols, threads.x);
-            grid.y = divUp(src.rows, threads.y);
+		static __global__ void R2CDataExt(float *d_in, cufftComplex *d_out, int n)
+		{
+			//int tid = threadIdx.x;
+			int ix = blockIdx.x * blockDim.x + threadIdx.x;
 
-            cudaChannelFormatDesc desc = cudaCreateChannelDesc<uchar4>();
-            cudaSafeCall( cudaBindTexture2D( 0, tex_meanshift, src.data, desc, src.cols, src.rows, src.step ) );
+			//for (int ix=tid; ix<n; ix+=threads_num)
+			if (ix < n)
+			{
+				d_out[ix].x = d_in[ix];
+				d_out[ix].y = 0.0f;
+				d_out[2 * n - 1 - ix].x = d_in[ix];
+				d_out[2 * n - 1 - ix].y = 0.0f;
+	}
+}
+		static __global__ void C2CHalf(cufftComplex *d_in, cufftComplex *d_out, int n)
+		{
+			//int tid = threadIdx.x;
+			int ix = blockIdx.x * blockDim.x + threadIdx.x;
+			float d_k;
 
-            meanshift_kernel<<< grid, threads, 0, stream >>>( dst.data, dst.step, dst.cols, dst.rows, sp, sr, maxIter, eps );
-            cudaSafeCall( cudaGetLastError() );
+			//for (int ix=tid; ix<n; ix+=threads_num)
+			if (ix < n)
+			{
+				if (ix < n / 2)
+					d_k = (float)ix*CV_PI_F / (float)(n / 2);
+				else
+					d_k = -CV_PI_F + (float)(ix - n / 2)*CV_PI_F / (float)(n / 2);
 
-            if (stream == 0)
-                cudaSafeCall( cudaDeviceSynchronize() );
+				d_out[ix].x = d_in[ix].x*cosf(d_k / 2.0f) + d_in[ix].y*sinf(d_k / 2.0f);
+				d_out[ix].y = -d_in[ix].x*sinf(d_k / 2.0f) + d_in[ix].y*cosf(d_k / 2.0f);
+			}
+		}
+		static __global__ void C2RDataGet(cufftComplex *d_in, float *d_out, int n)
+		{
+			//int tid = threadIdx.x;
+			int ix = blockIdx.x * blockDim.x + threadIdx.x;
 
-            //cudaSafeCall( cudaUnbindTexture( tex_meanshift ) );
-        }
+			//for (int ix=tid; ix<n; ix+=threads_num)
+			if (ix < n)
+				d_out[ix] = d_in[ix].x;
+		}
+		static __global__ void transposeReal_2d(float *out, float *in, int width, int height)
+		{
+			int ix = blockIdx.x*blockDim.x + threadIdx.x;
+			int iy = blockIdx.y*blockDim.y + threadIdx.y;
+			int idx_in = iy * width + ix;
+			int idx_out = ix * height + iy;
 
-        void meanShiftProc_gpu(const PtrStepSzb& src, PtrStepSzb dstr, PtrStepSzb dstsp, int sp, int sr, int maxIter, float eps, cudaStream_t stream)
-        {
-            dim3 grid(1, 1, 1);
-            dim3 threads(32, 8, 1);
-            grid.x = divUp(src.cols, threads.x);
-            grid.y = divUp(src.rows, threads.y);
+			if (ix < width && iy < height)
+				out[idx_out] = in[idx_in];
+		}
 
-            cudaChannelFormatDesc desc = cudaCreateChannelDesc<uchar4>();
-            cudaSafeCall( cudaBindTexture2D( 0, tex_meanshift, src.data, desc, src.cols, src.rows, src.step ) );
+		void cufft_DCT1D(float *d_in, float *d_out, int n)
+		{
+			/* Allocate meory for extended complex data */
+			cufftComplex *d_in_ext;
+			cudaMalloc((void **)&d_in_ext, 2 * n * sizeof(cufftComplex));
 
-            meanshiftproc_kernel<<< grid, threads, 0, stream >>>( dstr.data, dstr.step, dstsp.data, dstsp.step, dstr.cols, dstr.rows, sp, sr, maxIter, eps );
-            cudaSafeCall( cudaGetLastError() );
+			/* Extend and convert the data from float to cufftComplex */
+			R2CDataExt << <(n + threads_num - 1) / threads_num, threads_num >> > (d_in, d_in_ext, n);
 
-            if (stream == 0)
-                cudaSafeCall( cudaDeviceSynchronize() );
+			/* Create a 1D FFT plan */
+			cufftHandle plan;
+			cufftPlan1d(&plan, 2 * n, CUFFT_C2C, 1);
 
-            //cudaSafeCall( cudaUnbindTexture( tex_meanshift ) );
-        }
-		
+			/* Allocate memory for transformed data */
+			cufftComplex *d_out_ext;
+			cudaMalloc((void **)&d_out_ext, 2 * n * sizeof(cufftComplex));
+
+			/* Use the CUFFT plan to transform the signal out of place */
+			cufftExecC2C(plan, d_in_ext, d_out_ext, CUFFT_FORWARD);
+
+			/* Allocate memory for shifted data */
+			cufftComplex *d_out_ext_shift;
+			cudaMalloc((void **)&d_out_ext_shift, 2 * n * sizeof(cufftComplex));
+
+			/* 1/2 phase shift */
+			C2CHalf << <(2 * n + threads_num - 1) / threads_num, threads_num >> > (d_out_ext, d_out_ext_shift, 2 * n);
+
+			/* Subtract the transformed data */
+			C2RDataGet << <(n + threads_num - 1) / threads_num, threads_num >> > (d_out_ext_shift, d_out, n);
+
+			cufftDestroy(plan);
+			cudaFree(d_in_ext);
+			cudaFree(d_out_ext);
+			cudaFree(d_out_ext_shift);
+		}
+		void cufft_DCT_XY(float *d_in, float *d_out, int nx, int ny)
+		{
+			for (int iy = 0; iy < ny; iy++)
+				cufft_DCT1D(&d_in[iy*nx], &d_out[iy*nx], nx);
+		}
+		void cufft_DCT_2D(float *d_in, float *d_out, int nx, int ny)
+		{
+			/* Allocate memory for derivative */
+			float *d_in_tmp;
+			cudaMalloc((void **)&d_in_tmp, nx*ny * sizeof(float));
+
+			cufft_DCT_XY(d_in, d_in_tmp, nx, ny);
+
+			/* Allocate memory for transpose matrix */
+			float *d_in_trsp;
+			cudaMalloc((void **)&d_in_trsp, nx*ny * sizeof(float));
+
+			dim3 grids((nx + BLOCK_SIZE - 1) / BLOCK_SIZE, (ny + BLOCK_SIZE - 1) / BLOCK_SIZE), blocks(BLOCK_SIZE, BLOCK_SIZE);
+			/* Transpose the matrix */
+			transposeReal_2d << <grids, blocks >> > (d_in_trsp, d_in_tmp, nx, ny);
+
+			cufft_DCT_XY(d_in_trsp, d_in_tmp, ny, nx);
+
+			/* Transpose back the derivative */
+			dim3 grids2((ny + BLOCK_SIZE - 1) / BLOCK_SIZE, (nx + BLOCK_SIZE - 1) / BLOCK_SIZE), blocks2(BLOCK_SIZE, BLOCK_SIZE);
+			transposeReal_2d << <grids2, blocks2 >> > (d_out, d_in_tmp, ny, nx);
+
+			/* Deallocate memory */
+			cudaFree(d_in_trsp);
+			cudaFree(d_in_tmp);
+		}
 		void dct2d_gpu(const PtrStepSzf& src, PtrStepSzf dst, int nw, int nh)
 		{	
+#if 0 //native
 			dim3 grid(1, 1, 1);
 			dim3 dimblock(16, 16);
 
@@ -265,6 +389,24 @@ namespace cv { namespace gpu { namespace device
 			cudaSafeCall(cudaGetLastError());
 
 			cudaSafeCall(cudaDeviceSynchronize());
+#elif defined(HAVE_CUFFT)
+#else
+			cufftHandle plan;
+			cufftComplex *data1, *data2;
+			cudaMalloc((void**)&data1, sizeof(cufftComplex)*src.cols*src.rows);
+			cudaMalloc((void**)&data2, sizeof(cufftComplex)*src.cols*src.rows);
+			/* Create a 2D FFT plan. */
+			cufftPlan2d(&plan, src.cols, src.rows, CUFFT_C2C);
+			/* Use the CUFFT plan to transform the signal out of place.
+			*/
+			cufftExecC2C(plan, data1, data2, CUFFT_FORWARD);
+			/* Inverse transform the signal in place */
+			//cufftExecC2C(plan, data2, data2, CUFFT_INVERSE);
+			cudaSafeCall(cudaDeviceSynchronize());
+			/* Destroy the CUFFT plan. */
+			cufftDestroy(plan);
+			cudaFree(data1); cudaFree(data2);
+#endif
 		}
         /////////////////////////////////// drawColorDisp ///////////////////////////////////////////////
 

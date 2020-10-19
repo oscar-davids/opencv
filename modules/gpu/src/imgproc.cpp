@@ -183,11 +183,12 @@ namespace cv {	namespace gpu {	namespace device
 {
 	namespace imgproc
 	{
-		void dct2d_gpu(const PtrStepSzf& src, PtrStepSzf dstr, int nw, int nh);
+		void dct2d_gpu(const PtrStepSzf& src, PtrStepSzf dst, int nw, int nh);
 	}
 }}}
 
-void cv::gpu::dct2d(const GpuMat& src, GpuMat& dstr)
+
+void cv::gpu::dct2d(const GpuMat& src, GpuMat& dst)
 {
 	using namespace ::cv::gpu::device::imgproc;
 
@@ -197,9 +198,53 @@ void cv::gpu::dct2d(const GpuMat& src, GpuMat& dstr)
 	if (src.depth() != CV_32FC1 || src.channels() != 1)
 		CV_Error(CV_StsUnsupportedFormat, "Only 32-bit, 1-channel images are supported");
 
-	dstr.create(src.size(), CV_32FC1);
+	dst.create(src.size(), CV_32FC1);
 
-	dct2d_gpu(src, dstr, src.cols, src.rows);
+	dct2d_gpu(src, dst, src.cols, src.rows);
+
+#ifndef HAVE_CUFFT
+	OPENCV_GPU_UNUSED(src);
+	OPENCV_GPU_UNUSED(dst);
+	OPENCV_GPU_UNUSED(dft_size);
+	OPENCV_GPU_UNUSED(flags);
+	OPENCV_GPU_UNUSED(stream);
+	throw_nogpu();
+#else
+
+	CV_Assert(src.type() == CV_32F);
+	GpuMat src_data;
+	GpuMat dstcpx1;
+
+	// Make sure here we work with the continuous input,
+	// as CUFFT can't handle gaps
+	src_data = src;
+	createContinuous(src.rows, src.cols, src.type(), src_data);
+	if (src_data.data != src.data)
+		src.copyTo(src_data);
+
+	Size dft_size_opt = src.size();
+	cufftType dft_type = CUFFT_R2C;
+	
+	CV_Assert(dft_size_opt.width > 1);
+
+	cufftHandle plan;
+	cufftPlan2d(&plan, dft_size_opt.height, dft_size_opt.width, dft_type);
+	
+
+	//cufftSafeCall(cufftSetStream(plan, StreamAccessor::getStream(Null())));
+	createContinuous(dft_size_opt, CV_32FC2, dstcpx1);
+	cufftSafeCall(cufftExecC2C(
+		plan, src_data.ptr<cufftComplex>(), dstcpx1.ptr<cufftComplex>(), CUFFT_FORWARD));
+
+	cufftSafeCall(cufftDestroy(plan));
+
+	
+
+	//if (is_scaled_dft)
+	//	multiply(dst, Scalar::all(1. / dft_size.area()), dst, 1, -1, stream);
+
+#endif
+
 }
 ////////////////////////////////////////////////////////////////////////
 // drawColorDisp
