@@ -599,21 +599,24 @@ namespace cv { namespace gpu { namespace device
 			cufftComplex *d_in_ext;
 			cudaMalloc((void **)&d_in_ext, nw* nh * sizeof(cufftComplex));
 			R2CDataExtNM << < grid, dimblock >> > (fin, d_in_ext, nw, nh);
+			cudaSafeCall(cudaGetLastError());
 
 			cufftHandle plan;			
 			cufftPlan2d(&plan, nh, nw, CUFFT_C2C);
 
 			cufftComplex *d_out_ext;
 			cudaMalloc((void **)&d_out_ext, nw * nh * sizeof(cufftComplex));
-			cufftExecC2C(plan, d_in_ext, d_out_ext, CUFFT_FORWARD);
+			cufftExecC2C(plan, d_in_ext, d_out_ext, CUFFT_FORWARD);			
+			cudaSafeCall(cudaGetLastError());
 
 			cufftComplex *d_out_ext_shift;
 			cudaMalloc((void **)&d_out_ext_shift, nw * nh * sizeof(cufftComplex));
 			float fscale = 2.0f / sqrtf((float)(nw * nh));
 			C2CHalfNM << < grid, dimblock >> > (d_out_ext, d_out_ext_shift, nw, nh, fscale);
-
+			cudaSafeCall(cudaGetLastError());
 #if 1
 			C2RDataGetNM << < grid, dimblock >> > (d_out_ext_shift, fout, nw, nh);
+			cudaSafeCall(cudaGetLastError());
 #else
 			//C2RDataGetNM << < grid, dimblock >> > (d_out_ext_shift, fout, nw, nh);
 			//float *d_in_tmp;
@@ -637,8 +640,8 @@ namespace cv { namespace gpu { namespace device
 			//transposeReal_2d << <grid, dimblock >> > (fout, d_in_tmp, ny, nx);
 			cufftDestroy(plany);
 			cudaFree(d_in_tmp);
-#endif
-			cufftDestroy(plan);			
+#endif			
+			cufftDestroy(plan);
 			cudaFree(d_in_ext);
 			cudaFree(d_out_ext);
 			cudaFree(d_out_ext_shift);

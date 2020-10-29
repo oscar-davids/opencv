@@ -2625,26 +2625,28 @@ void* calc_framediff(void* pInfo)
 		return NULL;
 
 #if 0 //def _DEBUG
-	reference_frame = cv::imread("d:/tmp/bmptest/reference_frame.bmp");
-	rendition_frame = cv::imread("d:/tmp/bmptest/rendition_frame.bmp");
-	next_reference_frame = cv::imread("d:/tmp/bmptest/next_reference_frame.bmp");
-	next_rendition_frame = cv::imread("d:/tmp/bmptest/next_rendition_frame.bmp");
+	IplImage* preference_frame = (IplImage*)cvLoad("d:/tmp/bmptest/reference_frame.bmp");
+	IplImage* prendition_frame = (IplImage*)cvLoad("d:/tmp/bmptest/rendition_frame.bmp");
+	IplImage* pnext_reference_frame = (IplImage*)cvLoad("d:/tmp/bmptest/next_reference_frame.bmp");
+	
+	reference_frame = cv::Mat(preference_frame, true);
+	rendition_frame = cv::Mat(prendition_frame, true);
+	next_reference_frame = cv::Mat(pnext_reference_frame, true);
 #else
 
 	reference_frame = cv::Mat(height, width, CV_8UC3, pPair->listmain[index]);
 	rendition_frame = cv::Mat(height, width, CV_8UC3, pPair->listref[index]);
 
-	next_reference_frame = cv::Mat(height, width, CV_8UC3, pPair->listref[index+1]);
-	//next_rendition_frame = Mat(height, width, CV_8UC3, pctxrendition->listfrmame[index+1]->data[0]);
+	next_reference_frame = cv::Mat(height, width, CV_8UC3, pPair->listmain[index+1]);
 #endif
 
 	
 
-#if 0 //def _DEBUG
-	cv::imwrite("d:/tmp/bmptest/reference_frame.bmp", reference_frame);
-	cv::imwrite("d:/tmp/bmptest/rendition_frame.bmp", rendition_frame);
-	cv::imwrite("d:/tmp/bmptest/next_reference_frame.bmp", next_reference_frame);
-	cv::imwrite("d:/tmp/bmptest/next_rendition_frame.bmp", next_rendition_frame);
+#ifdef _DEBUG
+	//IplImage ipltemp = imgMat;
+	cvSave("d:/tmp/bmptest/reference_frame.bmp", &reference_frame);
+	cvSave("d:/tmp/bmptest/rendition_frame.bmp", &rendition_frame);
+	cvSave("d:/tmp/bmptest/next_reference_frame.bmp", &next_reference_frame);	
 #endif
 
 	cv::cvtColor(reference_frame, reference_frame_v, cv::COLOR_BGR2HSV);
@@ -2681,7 +2683,8 @@ void* calc_framediff(void* pInfo)
 			break;
 		case LP_FT_GAUSSIAN_MSE:
 			cv::pow(difference_frame, 2.0, difference_frame_p);
-			dmse = cv::sum(difference_frame_p).val[0] / (width*height);
+			//dmse = cv::sum(difference_frame_p).val[0] / (width*height);
+			dmse = cv::mean(difference_frame_p).val[0];
 			*(pout + i) = dmse;
 			break;
 		case LP_FT_GAUSSIAN_DIFF:
@@ -2731,7 +2734,8 @@ int aggregate_matrix(FramePairList* pPair)
 
 			*poutstart = *poutstart / (pPair->samplecount - 1);
 			//up scale values
-			*poutstart = *poutstart * pPair->width * pPair->height;
+			if (j != LP_FT_GAUSSIAN_TH_DIFF)
+				*poutstart = *poutstart * pPair->width * pPair->height;			
 			pPair->finalscore[j] = *poutstart;
 		}
 	}
@@ -2746,7 +2750,9 @@ CV_IMPL int cvCalcDiffMatrix(void* pairframes)
 
 	int ret = 0;
 	int i, ncount;	
+#ifdef USE_MULTI_THREAD
 	pthread_t threads[MAX_NUM_THREADS];
+#endif
 	ncount = pPair->samplecount - 1;	
 
 	PairArg* pairinfo = (PairArg*)malloc(sizeof(PairArg) * ncount);
@@ -2755,7 +2761,7 @@ CV_IMPL int cvCalcDiffMatrix(void* pairframes)
 		pairinfo[i].pairlist = pPair;		
 		pairinfo[i].index = i;
 	}
-#ifdef USE_MULTI_THREAD
+#if 0 //def USE_MULTI_THREAD
 	for (i = 0; i < ncount; i++) {
 		if (pthread_create(&threads[i], NULL, calc_framediff, (void *)&pairinfo[i])) {
 			fprintf(stderr, "Error create thread id %d\n", i);	

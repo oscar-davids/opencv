@@ -1860,25 +1860,28 @@ void* calc_framediffcuda_opt(void* pInfo)
 	if (pPair->listmain[index] == NULL || pPair->listref[index] == NULL)
 		return NULL;
 
-#if USE_OPENCV_READ
-	reference_frame = imread("d:/tmp/bmptest/reference_frame.bmp");
-	rendition_frame = imread("d:/tmp/bmptest/rendition_frame.bmp");
-	next_reference_frame = imread("d:/tmp/bmptest/next_reference_frame.bmp");
-	next_rendition_frame = imread("d:/tmp/bmptest/next_rendition_frame.bmp");
+#if 0//USE_OPENCV_READ
+	IplImage* preference_frame = (IplImage*)cvLoad("d:/tmp/bmptest/reference_frame.bmp");
+	IplImage* prendition_frame = (IplImage*)cvLoad("d:/tmp/bmptest/rendition_frame.bmp");
+	IplImage* pnext_reference_frame = (IplImage*)cvLoad("d:/tmp/bmptest/next_reference_frame.bmp");
+
+	reference_frame = cv::Mat(preference_frame, true);
+	rendition_frame = cv::Mat(prendition_frame, true);
+	next_reference_frame = cv::Mat(pnext_reference_frame, true);
 #else
 
 	reference_frame = Mat(height, width, CV_8UC3, pPair->listmain[index]);
 	rendition_frame = Mat(height, width, CV_8UC3, pPair->listref[index]);
 
-	next_reference_frame = Mat(height, width, CV_8UC3, pPair->listref[index + 1]);
-	//next_rendition_frame = Mat(height, width, CV_8UC3, pctxrendition->listfrmame[index+1]->data[0]);
+	next_reference_frame = Mat(height, width, CV_8UC3, pPair->listmain[index + 1]);
+	//next_rendition_frame = Mat(height, width, CV_8UC3, pctxrendition->listref[index+1]->data[0]);
 #endif
 
 #if USE_OPENCV_WRITE
-	imwrite("d:/tmp/bmptest/reference_frame.bmp", reference_frame);
-	imwrite("d:/tmp/bmptest/rendition_frame.bmp", rendition_frame);
-	imwrite("d:/tmp/bmptest/next_reference_frame.bmp", next_reference_frame);
-	imwrite("d:/tmp/bmptest/next_rendition_frame.bmp", next_rendition_frame);
+	//IplImage ipltemp = imgMat;
+	cvSave("d:/tmp/bmptest/reference_frame.bmp", &reference_frame);
+	cvSave("d:/tmp/bmptest/rendition_frame.bmp", &rendition_frame);
+	cvSave("d:/tmp/bmptest/next_reference_frame.bmp", &next_reference_frame);
 #endif
 
 	cvtColor(reference_frame, reference_frame_v, COLOR_BGR2HSV);
@@ -1926,10 +1929,8 @@ void* calc_framediffcuda_opt(void* pInfo)
 		switch (i)
 		{
 		case LP_FT_DCT:
-#if 0
 			cv::gpu::dct2d(BufGpuCalc[index].gmatreference_frame_v, BufGpuCalc[index].gmatreference_dct);
 			cv::gpu::dct2d(BufGpuCalc[index].gmatrendition_frame_v, BufGpuCalc[index].gmatrendition_dct);
-
 #if USE_DEBUG_BMP
 			//imwrite("d:/tmp/bmptest/gpu_gauss_reference_frame.bmp", gauss_reference_frame);
 			//imwrite("d:/tmp/bmptest/gpu_gauss_rendition_frame.bmp", gauss_rendition_frame);
@@ -1941,8 +1942,6 @@ void* calc_framediffcuda_opt(void* pInfo)
 			cv::gpu::subtract(BufGpuCalc[index].gmatreference_dct, BufGpuCalc[index].gmatrendition_dct, BufGpuCalc[index].gmatdiff_dct);
 			cv::gpu::minMax(BufGpuCalc[index].gmatdiff_dct, &dmin, &dmax);
 			*(pout + i) = dmax;
-#endif 
-			*(pout + i) = 0.0;
 			break;
 		case LP_FT_GAUSSIAN_MSE:
 			cv::gpu::pow(BufGpuCalc[index].gmatdifference_frame, 2.0, BufGpuCalc[index].gmatdifference_frame_p);
@@ -1958,7 +1957,6 @@ void* calc_framediffcuda_opt(void* pInfo)
 			cv::gpu::threshold(BufGpuCalc[index].gmatdifference_frame, BufGpuCalc[index].gmathreshold_frame, stddev.val[0], 1, THRESH_BINARY);
 			ssum = cv::gpu::sum(BufGpuCalc[index].gmathreshold_frame);
 			*(pout + i) = ssum.val[0];
-
 			break;
 		case LP_FT_HISTOGRAM_DISTANCE:
 			calcHist(&reference_frame, 1, channels, Mat(), hist_a, 3, bins, ranges, true, false);
@@ -2038,7 +2036,7 @@ void* calc_framediffcuda(void* pInfo)
 	reference_frame = Mat(height, width, CV_8UC3, pPair->listmain[index]);
 	rendition_frame = Mat(height, width, CV_8UC3, pPair->listref[index]);
 
-	next_reference_frame = Mat(height, width, CV_8UC3, pPair->listref[index + 1]);
+	next_reference_frame = Mat(height, width, CV_8UC3, pPair->listmain[index + 1]);
 	//next_rendition_frame = Mat(height, width, CV_8UC3, pctxrendition->listfrmame[index+1]->data[0]);
 #endif
 
@@ -2178,8 +2176,8 @@ void* calc_framediff(void* pInfo)
 	reference_frame = cv::Mat(height, width, CV_8UC3, pPair->listmain[index]);
 	rendition_frame = cv::Mat(height, width, CV_8UC3, pPair->listref[index]);
 
-	next_reference_frame = cv::Mat(height, width, CV_8UC3, pPair->listref[index + 1]);
-	//next_rendition_frame = Mat(height, width, CV_8UC3, pctxrendition->listfrmame[index+1]->data[0]);
+	next_reference_frame = cv::Mat(height, width, CV_8UC3, pPair->listmain[index + 1]);
+	//next_rendition_frame = Mat(height, width, CV_8UC3, pctxrendition->listref[index+1]->data[0]);
 #endif
 
 #if 0 //def _DEBUG
@@ -2273,7 +2271,8 @@ int aggregate_matrix(FramePairList* pPair)
 
 			*poutstart = *poutstart / (pPair->samplecount - 1);
 			//up scale values
-			*poutstart = *poutstart * pPair->width * pPair->height;
+			if (j != LP_FT_GAUSSIAN_TH_DIFF)
+				*poutstart = *poutstart * pPair->width * pPair->height;
 			pPair->finalscore[j] = *poutstart;
 		}
 	}
@@ -2289,7 +2288,7 @@ CV_IMPL int cvCalcDiffMatrixwithCuda(void* pairframes)
 
 #ifdef HAVE_CUDA	
 	int i, ncount;
-#ifdef USE_MULTI_THREAD
+#if 0 //def USE_MULTI_THREAD
 	pthread_t threads[MAX_NUM_THREADS];
 #endif
 	ncount = pPair->samplecount - 1;
@@ -2300,7 +2299,7 @@ CV_IMPL int cvCalcDiffMatrixwithCuda(void* pairframes)
 		pairinfo[i].pairlist = pPair;
 		pairinfo[i].index = i;
 	}
-#ifdef USE_MULTI_THREAD
+#if 0 //def USE_MULTI_THREAD
 	for (i = 0; i < ncount; i++) {
 #if USE_CUDA_OPTIMIZED
 		if (pthread_create(&threads[i], NULL, calc_framediffcuda_opt, (void *)&pairinfo[i]))
